@@ -13,7 +13,7 @@ public class Main {
     public static void main(String[] args) {
 
         MyThreadPool myThreadPool = new MyThreadPool(
-            2, 4, 1, 
+            2, 10, 1, 
             TimeUnit.SECONDS, 
             new ArrayBlockingQueue<Runnable>(2),
             new CallerRunsPolicy()

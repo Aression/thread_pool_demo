@@ -9,11 +9,10 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import tech.insight.policy.RejectPolicy;
-import tech.insight.poll.thread.CoreThread;
-import tech.insight.poll.thread.TemporaryThread;
+import tech.insight.poll.lifecycle.PoolState;
+import tech.insight.poll.worker.WorkerFactory;
 
 public class MyThreadPool {
-    private enum PoolState { RUNNING, SHUTDOWN, STOP, TERMINATED }
     // 基本参数
     private final int corePoolSize;
     private final int maxPoolSize;
@@ -28,8 +27,9 @@ public class MyThreadPool {
     private final AtomicInteger coreWorkerCount = new AtomicInteger(0);
     private final AtomicInteger tempWorkerCount = new AtomicInteger(0);
     private volatile PoolState state = PoolState.RUNNING;
+    private final WorkerFactory workerFactory = new WorkerFactory();
 
-    // 线程列表（用同步包装，仍建议在 mainLock 保护下访问）
+    // 线程列表，用同步包装
     private final List<Thread> coreThreads = Collections.synchronizedList(new ArrayList<>());
     private final List<Thread> temporaryThreads = Collections.synchronizedList(new ArrayList<>());
 
@@ -84,20 +84,7 @@ public class MyThreadPool {
             if (state != PoolState.RUNNING || coreWorkerCount.get() >= corePoolSize) {
                 return false;
             }
-            Thread thread = new CoreThread(firstTask, workQueue) {
-                @Override
-                public void run() {
-                    try {
-                        super.run();
-                    } catch (Throwable t) {
-                        // swallow to prevent worker crash bubbling up
-                    } finally {
-                        coreWorkerCount.decrementAndGet();
-                        coreThreads.remove(Thread.currentThread());
-                        tryTerminate();
-                    }
-                }
-            };
+            Thread thread = workerFactory.newCoreWorker(firstTask, workQueue, coreThreads, coreWorkerCount, this::tryTerminate);
             coreThreads.add(thread);
             coreWorkerCount.incrementAndGet();
             thread.start();
@@ -115,18 +102,7 @@ public class MyThreadPool {
             if (state == PoolState.STOP || coreWorkerCount.get() + tempWorkerCount.get() >= maxPoolSize) {
                 return false;
             }
-            Thread thread = new TemporaryThread(firstTask, workQueue, keepAliveTime, timeUnit, temporaryThreads) {
-                @Override
-                public void run() {
-                    try {
-                        super.run();
-                    } finally {
-                        tempWorkerCount.decrementAndGet();
-                        temporaryThreads.remove(Thread.currentThread());
-                        tryTerminate();
-                    }
-                }
-            };
+            Thread thread = workerFactory.newTempWorker(firstTask, workQueue, keepAliveTime, timeUnit, temporaryThreads, tempWorkerCount, this::tryTerminate);
             temporaryThreads.add(thread);
             tempWorkerCount.incrementAndGet();
             thread.start();
